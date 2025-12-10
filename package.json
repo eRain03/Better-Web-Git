@@ -16,7 +16,8 @@
         "isomorphic-git": "^1.25.0",
         "lucide-vue-next": "^0.300.0",
         "process": "^0.11.10",
-        "vue": "^3.4.0"
+        "vue": "^3.4.0",
+        "diff": "^5.2.0"
     },
     "devDependencies": {
         "@types/node": "^20.10.0",
