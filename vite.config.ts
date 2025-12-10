@@ -1,13 +1,7 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
-import { nodePolyfills } from 'vite-plugin-node-polyfills'
 
+// 以前这里有一堆 polyfill 配置，现在全删掉，回归最纯粹的 Vue 配置
 export default defineConfig({
-  plugins: [
-    vue(),
-    nodePolyfills({
-      include: ['buffer', 'process', 'path', 'util', 'stream', 'events'],
-      globals: { Buffer: true, process: true },
-    }),
-  ],
+  plugins: [vue()],
 })
