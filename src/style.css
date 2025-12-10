@@ -2,61 +2,35 @@
 @tailwind components;
 @tailwind utilities;
 
-/* === 全局复古工业风设置 === */
-
 html, body {
-  /* 背景色：深炭灰色，模拟显示器关闭或暗色桌面背景，让浅色控制台更显眼 */
-  background-color: #222;
-  /* 强制全局使用等宽字体作为基底 */
+  /* 纯白背景，像一张干净的办公桌 */
+  background-color: #ffffff;
+  /* 依然使用等宽字体作为基底 */
   font-family: 'Consolas', 'Monaco', 'Courier New', Courier, monospace;
   height: 100%;
   margin: 0;
-  /* 防止 iOS 点击高亮 */
   -webkit-tap-highlight-color: transparent;
-  /* 字体抗锯齿，让小字更清晰 */
   -webkit-font-smoothing: antialiased;
+  color: #111;
 }
 
-/* === 硬朗的工业风滚动条 (Webkit) === */
-
-/* 滚动条整体宽度 */
-::-webkit-scrollbar {
-  width: 14px;
-  height: 14px;
-}
-
-/* 滚动槽：像老式软件的凹槽 */
+/* === 工业风滚动条 (适配白底) === */
+::-webkit-scrollbar { width: 14px; height: 14px; }
 ::-webkit-scrollbar-track {
-  background: #e0e0e0;
-  border-left: 1px solid #999;
-  box-shadow: inset 1px 1px 2px rgba(0,0,0,0.1);
+  background: #f0f0f0;
+  border-left: 1px solid #ccc;
 }
-
-/* 滑块：凸起的按钮感 */
 ::-webkit-scrollbar-thumb {
-  background: #ccc;
-  border: 1px solid #fff; /* 高光 */
-  border-right: 1px solid #555; /* 阴影 */
-  border-bottom: 1px solid #555; /* 阴影 */
-  box-shadow: inset 1px 1px 0 #fff; /* 内部高光 */
-}
-
-
-::-webkit-scrollbar-thumb:hover {
-  background: #bbb;
-}
-
-/* 滑块点击 */
-::-webkit-scrollbar-thumb:active {
-  background: #aaa;
-  border: 1px solid #555;
-  border-right: 1px solid #fff;
-  border-bottom: 1px solid #fff;
-  box-shadow: inset 1px 1px 2px rgba(0,0,0,0.2);
-}
-
-/* 选中文字效果：像以前的终端一样反色 */
-::selection {
-  background: #000;
-  color: #fff;
-}
+    background: #ddd;
+    border: 1px solid #fff;
+    border-right: 1px solid #999;
+    border-bottom: 1px solid #999;
+    box-shadow: inset 1px 1px 0 #fff;
+  }
+  ::-webkit-scrollbar-thumb:hover { background: #ccc; }
+  ::-webkit-scrollbar-thumb:active {
+    background: #bbb;
+    border: 1px solid #999;
+    border-right: 1px solid #fff;
+    border-bottom: 1px solid #fff;
+  }
