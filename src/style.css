@@ -41,7 +41,7 @@ html, body {
   box-shadow: inset 1px 1px 0 #fff; /* 内部高光 */
 }
 
-/* 滑块悬停 */
+
 ::-webkit-scrollbar-thumb:hover {
   background: #bbb;
 }
