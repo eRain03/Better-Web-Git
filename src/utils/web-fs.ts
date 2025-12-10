@@ -1,36 +1,40 @@
 import { Buffer } from 'buffer';
 
 // ----------------------------------------------------------------------
-// 辅助函数
+// 1. 基础错误工厂 (Node.js Error Polyfill)
 // ----------------------------------------------------------------------
-
-function createError(code: string, message?: string) {
+function createError(code: string, message?: string, path?: string) {
   const err: any = new Error(message || code);
   err.code = code;
-  if (code === 'ENOENT') err.errno = -2;
-  if (code === 'EEXIST') err.errno = -17;
-  if (code === 'EISDIR') err.errno = -21;
-  if (code === 'EINVAL') err.errno = -22;
+  if (path) err.path = path;
+  // Map common codes to errno for isomorphic-git internals
+  const map: Record<string, number> = {
+    ENOENT: -2, EIO: -5, EEXIST: -17, ENOTDIR: -20, EISDIR: -21, EINVAL: -22, ENOSYS: -38
+  };
+  if (map[code]) err.errno = map[code];
   return err;
 }
 
+// ----------------------------------------------------------------------
+// 2. 核心文件系统操作 (Promise Based)
+// ----------------------------------------------------------------------
 async function getHandle(root: FileSystemDirectoryHandle, path: string, create = false, isDir = false) {
-  if (path === '/' || path === '.' || path === '') return root;
-
-  // 移除开头的 ./ 或 /
-  const cleanPath = path.replace(/^\.\//, '').replace(/^\//, '');
+  if (path === '/' || path === '.' || path === '' || path === './') return root;
+  
+  // Clean path: remove leading ./ or /
+  const cleanPath = path.replace(/^\.\//, '').replace(/^\//, '').replace(/\/$/, '');
   if (cleanPath === '') return root;
 
   const parts = cleanPath.split('/');
-  const name = parts.pop(); 
+  const name = parts.pop();
   let current: any = root;
   
-  // 遍历父目录
+  // Walk directories
   for (const part of parts) {
     try {
       current = await current.getDirectoryHandle(part, { create });
     } catch (e) {
-      throw createError('ENOENT', `Directory not found: ${part} in ${path}`);
+      throw createError('ENOENT', `path not found: ${path}`, path);
     }
   }
   
@@ -43,52 +47,58 @@ async function getHandle(root: FileSystemDirectoryHandle, path: string, create =
       return await current.getFileHandle(name, { create });
     }
   } catch (e) {
-    // 只有在明确不创建时才抛错，方便外部捕获进行 retry (比如 stat 探测)
-    throw createError('ENOENT', `Entry not found: ${name}`);
+    if (create) throw e;
+    throw createError('ENOENT', `entry not found: ${path}`, path);
   }
 }
 
 // ----------------------------------------------------------------------
-// 核心适配器
+// 3. 构造器
 // ----------------------------------------------------------------------
-
 export function createWebFS(rootHandle: FileSystemDirectoryHandle) {
-  
-  // === 1. 实现核心方法 ===
 
-  const readFile = async (path: string, options?: any) => {
-    const handle = await getHandle(rootHandle, path, false, false);
-    const file = await handle.getFile();
-    const buffer = Buffer.from(await file.arrayBuffer());
-    if (typeof options === 'string' || options?.encoding === 'utf8') {
-      return buffer.toString('utf8');
+  // --- Implementations (Async/Promise) ---
+
+  const readFileOps = async (path: string, options?: any) => {
+    try {
+      const handle = await getHandle(rootHandle, path, false, false);
+      const file = await handle.getFile();
+      const buffer = Buffer.from(await file.arrayBuffer());
+      if (typeof options === 'string') {
+        if (options === 'utf8') return buffer.toString('utf8');
+      } else if (options?.encoding === 'utf8') {
+        return buffer.toString('utf8');
+      }
+      return buffer;
+    } catch (e: any) {
+      if (e.code) throw e;
+      throw createError('ENOENT', e.message, path);
     }
-    return buffer;
   };
 
-  const writeFile = async (path: string, data: Uint8Array | string) => {
+  const writeFileOps = async (path: string, data: Uint8Array | string) => {
     const handle = await getHandle(rootHandle, path, true, false);
     const writable = await handle.createWritable();
     await writable.write(data);
     await writable.close();
   };
 
-  const unlink = async (path: string) => {
+  const unlinkOps = async (path: string) => {
     const cleanPath = path.replace(/^\.\//, '').replace(/^\//, '');
     const parts = cleanPath.split('/');
     const name = parts.pop();
+    if (!name) return; // Root cannot be deleted
     
-    if (!name) return; // 根目录无法删除
-    
-    // 获取父目录句柄
+    // Get parent
     let parent = rootHandle;
     if (parts.length > 0) {
+      // Must find parent dir
       parent = await getHandle(rootHandle, parts.join('/'), false, true);
     }
     await parent.removeEntry(name);
   };
 
-  const readdir = async (path: string) => {
+  const readdirOps = async (path: string) => {
     const handle = await getHandle(rootHandle, path, false, true);
     const entries = [];
     for await (const [name, ] of handle.entries()) {
@@ -97,20 +107,19 @@ export function createWebFS(rootHandle: FileSystemDirectoryHandle) {
     return entries;
   };
 
-  const mkdir = async (path: string) => {
+  const mkdirOps = async (path: string) => {
     await getHandle(rootHandle, path, true, true);
   };
 
-  const rmdir = async (path: string) => {
-    // 复用 unlink 逻辑，FileSystem API 中 removeEntry 通用于文件和文件夹
-    await unlink(path);
+  const rmdirOps = async (path: string) => {
+    await unlinkOps(path);
   };
 
-  const stat = async (path: string) => {
+  const statOps = async (path: string) => {
     let handle: any;
     let isDirectory = false;
-
-    // 探测逻辑：先试文件，失败则试目录
+    
+    // Probe: File or Dir?
     try {
       if (path === '/' || path === '.' || path === '') {
         handle = rootHandle;
@@ -124,7 +133,7 @@ export function createWebFS(rootHandle: FileSystemDirectoryHandle) {
         }
       }
     } catch (e) {
-      throw createError('ENOENT', path);
+      throw createError('ENOENT', `stat failed ${path}`, path);
     }
 
     let size = 0;
@@ -136,53 +145,79 @@ export function createWebFS(rootHandle: FileSystemDirectoryHandle) {
       mtimeMs = file.lastModified;
     }
 
+    // Return Node.js Stats like object
     return {
-      isFile: () => !isDirectory,
-      isDirectory: () => isDirectory,
-      isSymbolicLink: () => false,
+      type: isDirectory ? 'dir' : 'file',
+      mode: isDirectory ? 0o40755 : 0o100644,
       size,
       mtimeMs,
       ctimeMs: mtimeMs,
       atimeMs: mtimeMs,
-      dev: 0,
-      ino: 0,
-      mode: isDirectory ? 0o40755 : 0o100644,
       uid: 0,
       gid: 0,
+      dev: 0,
+      ino: 0,
+      isFile: () => !isDirectory,
+      isDirectory: () => isDirectory,
+      isSymbolicLink: () => false,
     };
   };
 
-  const lstat = stat; // 浏览器没有软链，lstat = stat
+  const lstatOps = statOps; // No symlinks in browser
 
-  const readlink = async () => {
-    throw createError('EINVAL', 'Not a symbolic link'); 
+  const readlinkOps = async () => {
+    throw createError('EINVAL', 'readlink not supported');
   };
 
-  const symlink = async () => {
+  const symlinkOps = async () => {
     throw createError('ENOSYS', 'symlink not supported');
   };
-
-  // === 2. 构造混合对象 ===
-  // 这里的关键是：fs 对象本身拥有这些方法，同时 fs.promises 也指向 fs (或包含相同方法)
   
-  const fs: any = {
-    readFile,
-    writeFile,
-    unlink,
-    readdir,
-    mkdir,
-    rmdir,
-    stat,
-    lstat,
-    readlink,
-    symlink,
-    chmod: async () => {}, 
+  const renameOps = async (oldPath: string, newPath: string) => {
+    // Basic rename: Read Old -> Write New -> Delete Old
+    // (File System Access API move() is pending standard)
+    const data = await readFileOps(oldPath);
+    await writeFileOps(newPath, data);
+    await unlinkOps(oldPath);
   };
 
-  // 这一步解决了 "reading 'bind'" 的问题
-  // isomorphic-git 既可以通过 fs.promises.readFile 调用
-  // 也可以通过 fs.readFile 调用
-  fs.promises = fs;
+  // --- 4. 组装对象 ---
+  
+  // Promise Interface
+  const promises = {
+    readFile: readFileOps,
+    writeFile: writeFileOps,
+    unlink: unlinkOps,
+    readdir: readdirOps,
+    mkdir: mkdirOps,
+    rmdir: rmdirOps,
+    stat: statOps,
+    lstat: lstatOps,
+    readlink: readlinkOps,
+    symlink: symlinkOps,
+    rename: renameOps
+  };
 
-  return fs;
+  // Callback Interface (Wrapper)
+  // This satisfies isomorphic-git's standard fs checks
+  const callbackify = (fn: Function) => (...args: any[]) => {
+    const cb = args.pop();
+    fn(...args).then((res: any) => cb(null, res)).catch((err: any) => cb(err));
+  };
+
+  return {
+    promises,
+    // Top-level callbacks
+    readFile: callbackify(readFileOps),
+    writeFile: callbackify(writeFileOps),
+    unlink: callbackify(unlinkOps),
+    readdir: callbackify(readdirOps),
+    mkdir: callbackify(mkdirOps),
+    rmdir: callbackify(rmdirOps),
+    stat: callbackify(statOps),
+    lstat: callbackify(lstatOps),
+    readlink: callbackify(readlinkOps),
+    symlink: callbackify(symlinkOps),
+    rename: callbackify(renameOps),
+  };
 }
