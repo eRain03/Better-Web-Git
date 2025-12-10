@@ -1,5 +1,6 @@
-import { ref, computed } from 'vue';
+import { ref } from 'vue';
 import git from 'isomorphic-git';
+import http from 'isomorphic-git/http/web'; // 引入 HTTP 插件
 import { createWebFS } from '../utils/web-fs';
 
 export type CommitInfo = {
@@ -11,7 +12,7 @@ export type CommitInfo = {
 
 export type FileStatus = {
   filepath: string;
-  status: string; // 'modified' | 'new' | 'deleted' | 'unmodified'
+  status: string;
   staged: boolean;
 };
 
@@ -23,28 +24,35 @@ export function useGit() {
   const unstagedFiles = ref<FileStatus[]>([]);
   const currentBranch = ref('');
   const loading = ref(false);
+  const remoteUrl = ref('');
 
-  // 初始化仓库连接
+  // 必须配置 CORS 代理，否则浏览器无法 fetch GitHub
+  const corsProxy = 'https://cors.isomorphic-git.org';
+
   const openRepo = async () => {
     try {
       const handle = await window.showDirectoryPicker();
       repoHandle.value = handle;
       fs.value = createWebFS(handle);
       await refresh();
+      // 尝试读取 remote url
+      try {
+        const remotes = await git.listRemotes({ fs: fs.value, dir: '/' });
+        const origin = remotes.find(r => r.remote === 'origin');
+        if (origin) remoteUrl.value = origin.url;
+      } catch (e) {}
     } catch (e) {
-      console.error('Failed to open repo', e);
+      console.error(e);
     }
   };
 
-  // 刷新所有数据
   const refresh = async () => {
     if (!fs.value) return;
     loading.value = true;
     try {
-      // 1. 获取当前分支
       currentBranch.value = await git.currentBranch({ fs: fs.value, dir: '/' }) || 'HEAD';
 
-      // 2. 获取提交历史
+      // 读取历史
       const logs = await git.log({ fs: fs.value, dir: '/', depth: 20, ref: currentBranch.value });
       commits.value = logs.map(l => ({
         oid: l.oid,
@@ -53,78 +61,88 @@ export function useGit() {
         timestamp: l.commit.author.timestamp
       }));
 
-      // 3. 获取文件状态矩阵
-      // FILE, HEAD, WORKDIR, STAGE
+      // 读取状态 (逻辑同前)
       const statusMatrix = await git.statusMatrix({ fs: fs.value, dir: '/' });
-
       const staged: FileStatus[] = [];
       const unstaged: FileStatus[] = [];
 
       statusMatrix.forEach(row => {
         const [filepath, head, workdir, stage] = row;
-        // head: 0(absent), 1(present)
-        // workdir: 0(absent), 1(identical), 2(modified)
-        // stage: 0(absent), 1(identical), 2(modified), 3(added/modified but uncommitted)
-
-        // 解析逻辑简化版
-        if (head === 1 && workdir === 2) {
-          unstaged.push({ filepath, status: 'modified', staged: false });
-        }
-        if (head === 0 && workdir === 2) {
-          unstaged.push({ filepath, status: 'new', staged: false });
-        }
-        if (head === 1 && workdir === 0) {
-           unstaged.push({ filepath, status: 'deleted', staged: false });
-        }
-
-        // Staged detection (simplified)
-        if (stage !== head && stage !== 0) {
-           // 注意：isomorphic-git 的 statusMatrix 比较复杂
-           // 这里为了演示，我们假设只要 stage 不等于 head 就是有变更在暂存区
-           staged.push({ filepath, status: 'staged', staged: true });
-        }
+        if (head === 1 && workdir === 2) unstaged.push({ filepath, status: 'modified', staged: false });
+        if (head === 0 && workdir === 2) unstaged.push({ filepath, status: 'new', staged: false });
+        if (head === 1 && workdir === 0) unstaged.push({ filepath, status: 'deleted', staged: false });
+        if (stage !== head && stage !== 0) staged.push({ filepath, status: 'staged', staged: true });
       });
 
       stagedFiles.value = staged;
       unstagedFiles.value = unstaged;
-
-    } catch (e) {
-      console.error(e);
-    } finally {
-      loading.value = false;
-    }
+    } catch (e) { console.error(e); }
+    finally { loading.value = false; }
   };
 
-  // 添加到暂存区
   const addToStage = async (filepath: string) => {
     if (!fs.value) return;
     await git.add({ fs: fs.value, dir: '/', filepath });
     await refresh();
   };
 
-  // 提交
-  const commit = async (message: string) => {
+  const commit = async (message: string, authorName: string, authorEmail: string) => {
     if (!fs.value) return;
     await git.commit({
       fs: fs.value,
       dir: '/',
       message,
-      author: { name: 'Tayen', email: 'tayen@local' } // 可以做成配置项
+      author: { name: authorName, email: authorEmail }
     });
     await refresh();
   };
 
+  // === 新增：PULL ===
+  const pull = async (username: string, token: string) => {
+    if (!fs.value) return;
+    loading.value = true;
+    try {
+      await git.pull({
+        fs: fs.value,
+        http,
+        dir: '/',
+        corsProxy,
+        singleBranch: true,
+        author: { name: 'user', email: 'user@example.com' }, // Merge 需要 author
+        onAuth: () => ({ username: token }), // GitHub Token 认证
+      });
+      await refresh();
+    } catch (e) {
+      alert(`Pull Failed: ${e.message}`);
+    } finally {
+      loading.value = false;
+    }
+  };
+
+  // === 新增：PUSH ===
+  const push = async (username: string, token: string) => {
+    if (!fs.value) return;
+    loading.value = true;
+    try {
+      await git.push({
+        fs: fs.value,
+        http,
+        dir: '/',
+        corsProxy,
+        onAuth: () => ({ username: token }),
+      });
+      await refresh();
+      alert('Push Successful!');
+    } catch (e) {
+      alert(`Push Failed: ${e.message}`);
+    } finally {
+      loading.value = false;
+    }
+  };
+
   return {
-    fs,
-    repoHandle,
-    openRepo,
-    refresh,
-    commits,
-    stagedFiles,
-    unstagedFiles,
-    currentBranch,
-    addToStage,
-    commit,
-    loading
+    fs, repoHandle, openRepo, refresh, commits,
+    stagedFiles, unstagedFiles, currentBranch, remoteUrl,
+    addToStage, commit, pull, push, loading
   };
 }

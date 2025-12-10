@@ -1,207 +1,243 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { ref } from 'vue';
 import { useGit } from './composables/useGit';
 import { useDiff } from './composables/useDiff';
 import DiffView from './components/DiffView.vue';
 import {
-  FolderOpen, GitBranch, GitCommit, RefreshCw,
-  Terminal, Activity, Layers, ChevronRight, Hash
+  FolderOpen, GitBranch, RefreshCw, Play, Upload, Download,
+  Settings, X, Check, Activity, Layers, Terminal
 } from 'lucide-vue-next';
 import { formatDistanceToNow } from 'date-fns';
 
 const {
   fs, repoHandle, openRepo, refresh, commits,
-  unstagedFiles, stagedFiles, currentBranch,
-  addToStage, commit, loading
+  unstagedFiles, stagedFiles, currentBranch, remoteUrl,
+  addToStage, commit, pull, push, loading
 } = useGit();
 
 const { diffWorkdir, diffLines, loadingDiff } = useDiff();
 
+// UI States
 const commitMessage = ref('');
 const selectedFile = ref<string | null>(null);
+const showSettings = ref(false);
+const githubToken = ref(localStorage.getItem('gh_token') || '');
+const authorName = ref(localStorage.getItem('git_name') || 'Tayen');
+const authorEmail = ref(localStorage.getItem('git_email') || 'tayen@local');
 
-// 交互逻辑
+// Actions
 const handleSelectFile = async (filepath: string) => {
   if (!fs.value) return;
   selectedFile.value = filepath;
   await diffWorkdir(fs.value, filepath);
 };
 
-const closeDiff = () => {
-  selectedFile.value = null;
-  diffLines.value = [];
-};
-
 const handleCommit = async () => {
   if (!commitMessage.value) return;
-  await commit(commitMessage.value);
+  await commit(commitMessage.value, authorName.value, authorEmail.value);
   commitMessage.value = '';
+};
+
+const handlePull = () => {
+  if (!githubToken.value) { showSettings.value = true; return; }
+  pull('x-access-token', githubToken.value);
+};
+
+const handlePush = () => {
+  if (!githubToken.value) { showSettings.value = true; return; }
+  push('x-access-token', githubToken.value);
+};
+
+const saveSettings = () => {
+  localStorage.setItem('gh_token', githubToken.value);
+  localStorage.setItem('git_name', authorName.value);
+  localStorage.setItem('git_email', authorEmail.value);
+  showSettings.value = false;
 };
 
 const getBasename = (path: string) => path.split('/').pop() || path;
 </script>
 
 <template>
-  <div class="flex h-screen w-full bg-bg text-text-main overflow-hidden">
+  <div class="flex h-screen w-full bg-[#09090b] text-[#e4e4e7] font-mono overflow-hidden">
 
-    <div v-if="!repoHandle" class="fixed inset-0 z-50 flex flex-col items-center justify-center bg-bg">
-      <div class="relative group cursor-pointer" @click="openRepo">
-        <div class="absolute inset-0 bg-white/5 rounded-full blur-2xl group-hover:bg-white/10 transition-all duration-500"></div>
-        <div class="relative bg-surface border border-border p-8 rounded-2xl shadow-2xl flex flex-col items-center gap-6 group-hover:border-text-dim transition-all active:scale-95">
-          <Terminal size="48" class="text-text-main" />
-          <div class="text-center">
-            <h1 class="text-xl font-bold tracking-widest uppercase">Git Console</h1>
-            <p class="text-text-dim text-xs mt-2">Local File System Access // Secure Environment</p>
-          </div>
-          <button class="bg-white text-black px-6 py-2 rounded font-bold text-sm hover:bg-gray-200 transition-colors">
-            MOUNT REPOSITORY
-          </button>
+    <div v-if="!repoHandle" class="fixed inset-0 z-40 flex flex-col items-center justify-center bg-[#09090b]">
+      <div class="text-center space-y-6 animate-fade-in">
+        <div class="w-16 h-16 bg-white/5 rounded-2xl flex items-center justify-center mx-auto ring-1 ring-white/10">
+          <Terminal size="32" />
         </div>
+        <div>
+          <h1 class="text-2xl font-medium tracking-tight">Git Fleet</h1>
+          <p class="text-[#a1a1aa] text-sm mt-2">No repository loaded</p>
+        </div>
+        <button
+          @click="openRepo"
+          class="bg-white text-black px-6 py-2.5 rounded-lg font-medium hover:bg-gray-200 transition-colors flex items-center gap-2 mx-auto"
+        >
+          <FolderOpen size="16" /> Open Folder
+        </button>
       </div>
     </div>
 
-    <aside v-else class="w-72 bg-surface/40 border-r border-border flex flex-col shrink-0 backdrop-blur-sm">
+    <div v-else class="flex flex-col w-full h-full">
 
-      <div class="h-14 border-b border-border flex items-center justify-between px-4">
-        <div class="flex items-center gap-3 overflow-hidden">
-          <div class="p-1.5 bg-element rounded">
-            <GitBranch size="14" />
+      <header class="h-12 border-b border-[#27272a] bg-[#09090b] flex items-center justify-between px-4 shrink-0">
+        <div class="flex items-center gap-4">
+          <div class="flex items-center gap-2 text-xs bg-[#27272a] px-3 py-1.5 rounded-md hover:bg-[#3f3f46] cursor-pointer transition-colors">
+            <GitBranch size="14" class="text-[#a1a1aa]" />
+            <span class="font-bold">{{ currentBranch }}</span>
           </div>
-          <div class="flex flex-col min-w-0">
-            <span class="text-xs font-bold truncate tracking-tight">{{ repoHandle.name }}</span>
-            <span class="text-[10px] text-text-dim truncate font-mono">{{ currentBranch }}</span>
-          </div>
-        </div>
-        <button @click="refresh" class="p-2 hover:bg-element rounded text-text-dim hover:text-white transition-colors" :class="{'animate-spin': loading}">
-          <RefreshCw size="14" />
-        </button>
-      </div>
-
-      <div class="flex-1 overflow-y-auto p-2 space-y-6">
-
-        <div>
-          <div class="flex items-center justify-between px-2 mb-2">
-            <h3 class="text-[10px] font-bold text-text-mute uppercase tracking-widest flex items-center gap-2">
-              <Layers size="10" /> Staged
-            </h3>
-            <span v-if="stagedFiles.length" class="text-[10px] bg-white/10 px-1.5 py-0.5 rounded text-white">{{ stagedFiles.length }}</span>
-          </div>
-
-          <div v-if="stagedFiles.length === 0" class="px-2 py-4 border border-dashed border-border rounded text-center">
-            <span class="text-[10px] text-text-mute">Stage empty</span>
-          </div>
-
-          <div class="space-y-0.5">
-            <div
-              v-for="file in stagedFiles"
-              :key="file.filepath"
-              @click="handleSelectFile(file.filepath)"
-              class="group flex items-center gap-2 px-2 py-1.5 rounded hover:bg-element cursor-pointer transition-colors"
-              :class="{'bg-element ring-1 ring-border': selectedFile === file.filepath}"
-            >
-              <div class="w-1.5 h-1.5 rounded-full bg-git-added shadow-[0_0_8px_rgba(74,222,128,0.4)]"></div>
-              <span class="text-xs truncate flex-1 opacity-80 group-hover:opacity-100">{{ getBasename(file.filepath) }}</span>
-            </div>
-          </div>
+          <span class="text-xs text-[#71717a]">{{ repoHandle.name }}</span>
         </div>
 
-        <div>
-          <div class="flex items-center justify-between px-2 mb-2">
-            <h3 class="text-[10px] font-bold text-text-mute uppercase tracking-widest flex items-center gap-2">
-              <Activity size="10" /> Changes
-            </h3>
-            <span v-if="unstagedFiles.length" class="text-[10px] bg-white/10 px-1.5 py-0.5 rounded text-white">{{ unstagedFiles.length }}</span>
+        <div class="flex items-center gap-2">
+          <div class="flex bg-[#27272a] rounded-md p-0.5">
+            <button @click="handlePull" class="p-1.5 hover:bg-white/10 rounded text-[#a1a1aa] hover:text-white" title="Pull">
+              <Download size="14" />
+            </button>
+            <button @click="handlePush" class="p-1.5 hover:bg-white/10 rounded text-[#a1a1aa] hover:text-white" title="Push">
+              <Upload size="14" />
+            </button>
           </div>
 
-          <div v-if="unstagedFiles.length === 0" class="px-2 py-4 border border-dashed border-border rounded text-center">
-             <span class="text-[10px] text-text-mute">Working tree clean</span>
-          </div>
+          <div class="w-px h-4 bg-[#27272a] mx-2"></div>
 
-          <div class="space-y-0.5">
-            <div
-              v-for="file in unstagedFiles"
-              :key="file.filepath"
-              class="group flex items-center gap-2 px-2 py-1.5 rounded hover:bg-element cursor-pointer transition-colors"
-              :class="{'bg-element ring-1 ring-border': selectedFile === file.filepath}"
-            >
-              <div class="flex-1 flex items-center gap-2 min-w-0" @click="handleSelectFile(file.filepath)">
-                <div class="w-1.5 h-1.5 rounded-full bg-git-modified shadow-[0_0_8px_rgba(251,191,36,0.4)]"></div>
-                <span class="text-xs truncate opacity-80 group-hover:opacity-100" :class="{'text-git-modified': selectedFile === file.filepath}">{{ getBasename(file.filepath) }}</span>
+          <button @click="refresh" class="p-2 hover:bg-[#27272a] rounded-md text-[#a1a1aa]" :class="{'animate-spin': loading}">
+            <RefreshCw size="14" />
+          </button>
+          <button @click="showSettings = true" class="p-2 hover:bg-[#27272a] rounded-md text-[#a1a1aa]">
+            <Settings size="14" />
+          </button>
+        </div>
+      </header>
+
+      <div class="flex flex-1 overflow-hidden">
+
+        <aside class="w-64 border-r border-[#27272a] bg-[#09090b] flex flex-col shrink-0">
+          <div class="flex-1 overflow-y-auto p-2 space-y-4">
+
+            <div>
+              <div class="px-2 py-1 text-[10px] font-bold text-[#52525b] uppercase tracking-wider flex justify-between">
+                <span>Staged</span>
+                <span v-if="stagedFiles.length" class="text-white">{{ stagedFiles.length }}</span>
               </div>
-              <button
-                @click.stop="addToStage(file.filepath)"
-                class="opacity-0 group-hover:opacity-100 text-[10px] px-1.5 py-0.5 bg-text-main text-bg rounded hover:bg-white transition-all font-bold"
+              <div v-if="!stagedFiles.length" class="px-2 py-2 text-xs text-[#52525b] italic">Empty</div>
+              <div v-for="file in stagedFiles" :key="file.filepath"
+                 @click="handleSelectFile(file.filepath)"
+                 class="group px-2 py-1.5 text-xs rounded-md hover:bg-[#27272a] cursor-pointer flex items-center gap-2"
+                 :class="{'bg-[#27272a] text-white': selectedFile === file.filepath, 'text-[#a1a1aa]': selectedFile !== file.filepath}"
               >
-                ADD
-              </button>
+                <div class="w-1.5 h-1.5 rounded-full bg-green-500"></div>
+                <span class="truncate">{{ getBasename(file.filepath) }}</span>
+              </div>
+            </div>
+
+            <div>
+              <div class="px-2 py-1 text-[10px] font-bold text-[#52525b] uppercase tracking-wider flex justify-between">
+                <span>Changes</span>
+                <span v-if="unstagedFiles.length" class="text-white">{{ unstagedFiles.length }}</span>
+              </div>
+              <div v-if="!unstagedFiles.length" class="px-2 py-2 text-xs text-[#52525b] italic">Clean</div>
+              <div v-for="file in unstagedFiles" :key="file.filepath"
+                 class="group px-2 py-1.5 text-xs rounded-md hover:bg-[#27272a] cursor-pointer flex items-center gap-2"
+                 :class="{'bg-[#27272a] text-white': selectedFile === file.filepath, 'text-[#a1a1aa]': selectedFile !== file.filepath}"
+              >
+                <div class="flex-1 flex items-center gap-2 min-w-0" @click="handleSelectFile(file.filepath)">
+                  <div class="w-1.5 h-1.5 rounded-full bg-yellow-500"></div>
+                  <span class="truncate">{{ getBasename(file.filepath) }}</span>
+                </div>
+                <button @click.stop="addToStage(file.filepath)" class="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-white hover:text-black rounded transition-all">
+                  <Play size="10" />
+                </button>
+              </div>
+            </div>
+
+          </div>
+
+          <div class="p-3 border-t border-[#27272a] bg-[#09090b]">
+            <textarea
+              v-model="commitMessage"
+              placeholder="Commit summary..."
+              class="w-full bg-[#18181b] text-xs text-white p-2 rounded-md border border-transparent focus:border-[#3f3f46] focus:outline-none resize-none h-16 placeholder-[#52525b]"
+              @keydown.ctrl.enter="handleCommit"
+            ></textarea>
+            <button
+              @click="handleCommit"
+              :disabled="!stagedFiles.length || !commitMessage"
+              class="w-full mt-2 bg-white text-black py-1.5 rounded-md text-xs font-bold hover:bg-gray-200 disabled:opacity-30 disabled:cursor-not-allowed"
+            >
+              Commit
+            </button>
+          </div>
+        </aside>
+
+        <main class="flex-1 bg-[#09090b] relative flex flex-col min-w-0">
+
+          <div v-if="selectedFile" class="absolute inset-0 z-10 bg-[#09090b] flex flex-col">
+            <DiffView
+              :filepath="selectedFile"
+              :lines="diffLines"
+              :loading="loadingDiff"
+              @close="selectedFile = null"
+            />
+          </div>
+
+          <div class="flex-1 flex flex-col">
+            <div class="h-8 border-b border-[#27272a] flex items-center px-4 text-xs text-[#52525b]">
+              HISTORY
+            </div>
+            <div class="flex-1 overflow-y-auto p-4 custom-scrollbar">
+              <div class="space-y-4">
+                <div v-for="commit in commits" :key="commit.oid" class="flex gap-4">
+                  <div class="w-8 h-8 rounded-full bg-[#27272a] flex items-center justify-center text-[10px] text-white font-bold shrink-0">
+                    {{ commit.author.slice(0,2).toUpperCase() }}
+                  </div>
+                  <div class="flex-1 min-w-0">
+                    <div class="flex items-baseline justify-between">
+                      <p class="text-sm text-[#e4e4e7] font-medium truncate">{{ commit.message }}</p>
+                      <span class="text-[10px] text-[#52525b] font-mono ml-2">{{ commit.oid.slice(0,7) }}</span>
+                    </div>
+                    <div class="flex items-center gap-2 mt-0.5">
+                      <span class="text-xs text-[#a1a1aa]">{{ commit.author }}</span>
+                      <span class="text-[10px] text-[#52525b]">• {{ formatDistanceToNow(new Date(commit.timestamp * 1000)) }} ago</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
-        </div>
+        </main>
       </div>
+    </div>
 
-      <div class="p-3 border-t border-border bg-bg/50">
-        <div class="relative">
-          <div class="absolute top-3 left-3 text-text-mute pointer-events-none">
-            <ChevronRight size="14" />
-          </div>
-          <textarea
-            v-model="commitMessage"
-            class="w-full bg-element border border-transparent focus:border-text-dim rounded-md pl-8 pr-3 py-2 text-xs text-text-main placeholder-text-mute/50 focus:outline-none resize-none h-24 transition-all font-mono"
-            placeholder="Commit message..."
-            @keydown.ctrl.enter="handleCommit"
-          ></textarea>
+    <div v-if="showSettings" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+      <div class="bg-[#18181b] border border-[#27272a] rounded-xl w-96 p-6 shadow-2xl">
+        <div class="flex justify-between items-center mb-6">
+          <h2 class="text-sm font-bold text-white">Git Configuration</h2>
+          <button @click="showSettings = false" class="text-[#52525b] hover:text-white"><X size="16"/></button>
         </div>
-        <button
-          @click="handleCommit"
-          :disabled="!stagedFiles.length || !commitMessage"
-          class="w-full mt-2 bg-text-main hover:bg-white text-bg py-2 rounded text-xs font-bold uppercase tracking-wider disabled:opacity-20 disabled:cursor-not-allowed transition-all"
-        >
-          Commit
+
+        <div class="space-y-4">
+          <div>
+            <label class="block text-[10px] uppercase text-[#52525b] font-bold mb-1">Author Name</label>
+            <input v-model="authorName" type="text" class="w-full bg-[#09090b] border border-[#27272a] rounded p-2 text-xs text-white focus:outline-none focus:border-white/20">
+          </div>
+          <div>
+            <label class="block text-[10px] uppercase text-[#52525b] font-bold mb-1">Author Email</label>
+            <input v-model="authorEmail" type="text" class="w-full bg-[#09090b] border border-[#27272a] rounded p-2 text-xs text-white focus:outline-none focus:border-white/20">
+          </div>
+          <div class="pt-4 border-t border-[#27272a]">
+            <label class="block text-[10px] uppercase text-[#52525b] font-bold mb-1">GitHub Personal Access Token</label>
+            <input v-model="githubToken" type="password" placeholder="ghp_..." class="w-full bg-[#09090b] border border-[#27272a] rounded p-2 text-xs text-white focus:outline-none focus:border-white/20">
+            <p class="text-[10px] text-[#52525b] mt-1">Required for Push/Pull. Saved to local storage.</p>
+          </div>
+        </div>
+
+        <button @click="saveSettings" class="w-full mt-6 bg-white text-black py-2 rounded text-sm font-bold hover:bg-gray-200">
+          Save & Close
         </button>
       </div>
-    </aside>
+    </div>
 
-    <main class="flex-1 flex flex-col bg-bg relative">
-
-      <div v-if="selectedFile" class="absolute inset-0 z-10 bg-bg flex flex-col">
-        <DiffView
-          :filepath="selectedFile"
-          :lines="diffLines"
-          :loading="loadingDiff"
-          @close="closeDiff"
-        />
-      </div>
-
-      <div class="flex flex-col h-full">
-        <div class="h-14 border-b border-border flex items-center justify-between px-6">
-          <h2 class="text-sm font-bold tracking-widest text-text-mute flex items-center gap-2">
-            <Hash size="14" /> LOG
-          </h2>
-        </div>
-
-        <div class="flex-1 overflow-y-auto p-6">
-          <div class="max-w-3xl mx-auto space-y-1">
-             <div v-for="(commit, idx) in commits" :key="commit.oid"
-               class="group relative pl-6 py-3 border-l border-border hover:border-text-dim transition-colors"
-             >
-                <div
-                  class="absolute -left-[5px] top-4 w-2.5 h-2.5 rounded-full border-4 border-bg transition-all group-hover:scale-125"
-                  :class="idx === 0 ? 'bg-white shadow-[0_0_10px_white]' : 'bg-border group-hover:bg-text-dim'"
-                ></div>
-
-                <div class="flex justify-between items-baseline mb-1">
-                  <span class="text-sm font-medium text-text-main group-hover:text-white transition-colors">{{ commit.message }}</span>
-                  <span class="text-[10px] font-mono text-text-mute">{{ commit.oid.substring(0,7) }}</span>
-                </div>
-                <div class="flex items-center gap-3 text-[10px] text-text-mute">
-                  <span class="uppercase tracking-wider">{{ commit.author }}</span>
-                  <span>{{ formatDistanceToNow(new Date(commit.timestamp * 1000)) }} ago</span>
-                </div>
-             </div>
-          </div>
-        </div>
-      </div>
-
-    </main>
   </div>
 </template>
