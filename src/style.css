@@ -1,13 +1,63 @@
+@import url('https://fonts.googleapis.com/css2?family=VT323&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 html, body {
-  background-color: #f8fafc;
+  background-color: #121212; /* 你的房间关灯了 */
   height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  font-family: 'VT323', monospace; /* 强制全局像素字体 */
+}
+
+/* 隐藏原生滚动条，使用自定义的方块滚动条 */
+::-webkit-scrollbar { width: 12px; }
+::-webkit-scrollbar-track { background: #1a1000; border-left: 1px solid #4a3200; }
+::-webkit-scrollbar-thumb {
+  background: #ffb000;
+  border: 2px solid #1a1000;
+  box-shadow: inset 0 0 2px rgba(0,0,0,0.5);
+}
+
+/* === CRT 效果核心 === */
+.crt-effect {
+  position: relative;
   overflow: hidden;
 }
-/* 隐藏滚动条但允许滚动 */
-::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+
+/* 1. 扫描线覆盖层 */
+.crt-effect::before {
+  content: " ";
+  display: block;
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  right: 0;
+  background: linear-gradient(
+    rgba(18, 16, 16, 0) 50%,
+    rgba(0, 0, 0, 0.25) 50%
+  );
+  background-size: 100% 4px; /* 扫描线密度 */
+  z-index: 50;
+  pointer-events: none; /* 不影响点击 */
+}
+
+/* 2. 微微的文字发光 */
+.text-glow {
+  text-shadow: 0 0 2px rgba(255, 176, 0, 0.4);
+}
+
+/* 3. 闪烁的光标 */
+.cursor-blink {
+  animation: blink 1s step-end infinite;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}

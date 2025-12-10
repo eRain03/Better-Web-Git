@@ -1,12 +1,8 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
-import {
-  GitBranch, RefreshCw, Layers, CheckCircle2,
-  Play, History, FileCode, X, Terminal, ArrowRight
-} from 'lucide-vue-next';
+import { ref, computed, onMounted, nextTick } from 'vue';
 import { formatDistanceToNow } from 'date-fns';
 
-// === 1. STATE (状态) ===
+// 模拟配置和状态
 const config = ref({
   url: localStorage.getItem('k_url') || 'http://127.0.0.1:8888',
   secret: localStorage.getItem('k_secret') || 'tayen-git-secret',
@@ -16,30 +12,34 @@ const config = ref({
 const isConnected = ref(false);
 const loading = ref(false);
 const error = ref('');
+const terminalLog = ref<string[]>(['> SYSTEM BOOT_SEQUENCE_INIT...', '> WAITING_FOR_LINK...']);
 
-// Git Data
-const repo = ref<any>(null);     // { name, branch }
+// Data
+const repo = ref<any>(null);
 const status = ref({ staged: [], unstaged: [] });
 const commits = ref([]);
-const diffContent = ref('');     // 选中的文件 Diff 文本
-const selectedFile = ref('');    // 当前选中的文件路径
+const diffContent = ref('');
+const selectedFile = ref('');
 const commitMsg = ref('');
 
-// === 2. API LOGIC (核心逻辑) ===
+// === LOGIC ===
+const log = (msg: string) => {
+  terminalLog.value.push(`> ${msg}`);
+  if (terminalLog.value.length > 5) terminalLog.value.shift();
+};
+
 const api = async (endpoint: string, method = 'GET', body?: any) => {
   try {
     const res = await fetch(`${config.value.url}${endpoint}`, {
       method,
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${config.value.secret}`
-      },
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${config.value.secret}` },
       body: body ? JSON.stringify(body) : undefined
     });
     if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
     return await res.json();
   } catch (e: any) {
     error.value = e.message;
+    log(`ERR: ${e.message.toUpperCase()}`);
     throw e;
   }
 };
@@ -47,8 +47,8 @@ const api = async (endpoint: string, method = 'GET', body?: any) => {
 const connect = async () => {
   loading.value = true;
   error.value = '';
+  log(`CONNECTING TO KERNEL AT ${config.value.path}...`);
   try {
-    // 保存配置方便下次使用
     localStorage.setItem('k_url', config.value.url);
     localStorage.setItem('k_secret', config.value.secret);
     localStorage.setItem('k_path', config.value.path);
@@ -56,6 +56,7 @@ const connect = async () => {
     const data = await api('/connect', 'POST', { path: config.value.path });
     repo.value = data;
     isConnected.value = true;
+    log(`LINK ESTABLISHED: ${data.name.toUpperCase()}`);
     await refresh();
   } catch (e) { isConnected.value = false; }
   finally { loading.value = false; }
@@ -67,173 +68,175 @@ const refresh = async () => {
     const [s, h] = await Promise.all([api('/status'), api('/history')]);
     status.value = s;
     commits.value = h;
+    log('DATA SYNC COMPLETE');
   } finally { loading.value = false; }
 };
 
 const stageFile = async (path: string) => {
   await api('/stage', 'POST', { path });
+  log(`STAGED: ${getBasename(path)}`);
   await refresh();
 };
 
 const doCommit = async () => {
   if (!commitMsg.value) return;
   await api('/commit', 'POST', { message: commitMsg.value });
+  log(`COMMIT SENT: "${commitMsg.value}"`);
   commitMsg.value = '';
   await refresh();
 };
 
 const showDiff = async (path: string) => {
   selectedFile.value = path;
-  // 暂时用 fetch 直接获取，因为 kernel 没有 diff 接口，我们假设 kernel.py 有一个 /diff?filepath=xxx
-  // 如果没有，可以先只显示路径。这里假设你加上了之前的 /diff 接口
+  log(`FETCHING DIFF: ${getBasename(path)}`);
   try {
-    // 简易处理：如果 Python 端还没加 diff 接口，这里会报错，暂时留空
-    // 为了演示效果，我们假设 Python 返回了 diff 文本
-    // diffContent.value = (await api(`/diff?filepath=${encodeURIComponent(path)}`)).content;
+    const res = await api(`/diff?filepath=${encodeURIComponent(path)}`);
+    diffContent.value = res.content || 'NO TEXT CHANGES DETECTED';
   } catch (e) {
-    diffContent.value = "Diff preview requires backend update.";
+    diffContent.value = "ERR: COULD NOT READ DIFF";
   }
 };
 
-// === 3. COMPUTED UI HELPERS ===
 const stagedList = computed(() => status.value.staged || []);
 const unstagedList = computed(() => status.value.unstaged || []);
 const getBasename = (p: string) => p.split('/').pop() || p;
 
-// 自动尝试连接
 onMounted(() => { if(config.value.path) connect(); });
 </script>
 
 <template>
-  <div class="h-screen w-full bg-page text-txt-main font-sans flex flex-col overflow-hidden">
+  <div class="w-[1024px] h-[768px] bg-[#111] rounded-lg p-6 shadow-crt-casing relative flex flex-col border-t border-[#333]">
 
-    <div v-if="error" class="fixed top-5 left-1/2 -translate-x-1/2 bg-red-50 text-red-600 px-4 py-2 rounded-full border border-red-200 shadow-lg text-sm z-50 flex items-center gap-2">
-      <span class="font-bold">Error:</span> {{ error }}
-      <button @click="error = ''" class="ml-2 hover:text-red-800">✕</button>
-    </div>
+    <div class="w-full h-full bg-crt-bg border-4 border-crt-border shadow-[inset_0_0_80px_rgba(0,0,0,0.8)] relative crt-effect text-amber flex flex-col p-2 text-xl font-medium tracking-wide">
 
-    <div v-if="!isConnected" class="flex-1 flex items-center justify-center">
-      <div class="bg-card w-96 p-8 rounded-2xl shadow-xl border border-border">
-        <div class="flex items-center justify-center w-12 h-12 bg-brand/10 text-brand rounded-xl mb-6 mx-auto">
-          <Terminal size="24" />
+      <header class="border-b-2 border-amber flex justify-between items-center px-2 py-1 shrink-0 bg-crt-bg z-10">
+        <div class="flex gap-4">
+          <span class="bg-amber text-crt-bg px-2 font-bold">GIT_TERM v1.0</span>
+          <span v-if="repo">REPO: {{ repo.name.toUpperCase() }} // BRANCH: {{ repo.branch }}</span>
+          <span v-else>NO CONNECTION</span>
         </div>
-        <h1 class="text-xl font-bold text-center mb-6">Git Kernel Connect</h1>
-
-        <div class="space-y-4">
-          <div>
-            <label class="text-xs font-bold text-txt-sub uppercase">Kernel URL</label>
-            <input v-model="config.url" class="w-full mt-1 px-3 py-2 bg-page border border-border rounded-lg text-sm font-mono focus:outline-brand" />
-          </div>
-          <div>
-            <label class="text-xs font-bold text-txt-sub uppercase">Secret</label>
-            <input v-model="config.secret" type="password" class="w-full mt-1 px-3 py-2 bg-page border border-border rounded-lg text-sm font-mono focus:outline-brand" />
-          </div>
-          <div>
-            <label class="text-xs font-bold text-txt-sub uppercase">Repo Path</label>
-            <input v-model="config.path" placeholder="Absolute path..." class="w-full mt-1 px-3 py-2 bg-page border border-border rounded-lg text-sm font-mono focus:outline-brand" />
-          </div>
-          <button @click="connect" :disabled="loading" class="w-full bg-brand text-white py-2.5 rounded-xl font-bold hover:bg-indigo-700 transition-all disabled:opacity-50 mt-4">
-            {{ loading ? 'Connecting...' : 'Connect Agent' }}
-          </button>
-        </div>
-      </div>
-    </div>
-
-    <div v-else class="flex-1 flex flex-col h-full">
-
-      <header class="h-14 bg-card border-b border-border flex items-center justify-between px-6 shrink-0">
-        <div class="flex items-center gap-3">
-          <div class="p-1.5 bg-gray-100 rounded-lg"><GitBranch size="16" /></div>
-          <div>
-            <div class="font-bold text-sm">{{ repo.name }}</div>
-            <div class="text-xs text-txt-sub font-mono">{{ repo.branch }}</div>
-          </div>
-        </div>
-        <div class="flex items-center gap-4">
-          <div class="text-xs text-txt-sub bg-page px-2 py-1 rounded font-mono">{{ config.path }}</div>
-          <button @click="refresh" class="p-2 hover:bg-gray-100 rounded-lg text-txt-sub transition-colors" :class="{'animate-spin': loading}">
-            <RefreshCw size="18" />
-          </button>
-          <button @click="isConnected = false" class="text-xs font-bold text-red-500 hover:bg-red-50 px-3 py-1.5 rounded-lg">Disconnect</button>
+        <div class="flex gap-4">
+          <span v-if="loading" class="animate-pulse">PROCESSING...</span>
+          <span>{{ new Date().toLocaleTimeString() }}</span>
         </div>
       </header>
 
-      <div class="flex-1 flex overflow-hidden">
+      <div v-if="!isConnected" class="absolute inset-0 z-40 bg-crt-bg flex items-center justify-center">
+        <div class="border-2 border-amber p-4 w-[500px] shadow-glow">
+          <h1 class="text-3xl mb-6 text-center border-b border-amber border-dashed pb-2">SYSTEM LOGIN</h1>
 
-        <aside class="w-80 bg-page border-r border-border flex flex-col z-10">
-          <div class="flex-1 overflow-y-auto p-4 space-y-6">
+          <div class="space-y-4">
+             <div class="flex gap-2 items-center">
+               <span class="w-24 text-right">KERNEL_URL:</span>
+               <input v-model="config.url" class="flex-1 bg-crt-panel border-b border-amber text-amber outline-none px-2 uppercase" />
+             </div>
+             <div class="flex gap-2 items-center">
+               <span class="w-24 text-right">SECRET:</span>
+               <input v-model="config.secret" type="password" class="flex-1 bg-crt-panel border-b border-amber text-amber outline-none px-2" />
+             </div>
+             <div class="flex gap-2 items-center">
+               <span class="w-24 text-right">PATH:</span>
+               <input v-model="config.path" class="flex-1 bg-crt-panel border-b border-amber text-amber outline-none px-2 uppercase" />
+             </div>
 
-            <div>
-              <div class="text-xs font-bold text-txt-sub uppercase tracking-wider mb-2 px-2 flex justify-between">
-                <span>Staged</span>
-                <span v-if="stagedList.length" class="bg-green-100 text-green-700 px-1.5 rounded-full">{{ stagedList.length }}</span>
+             <div class="pt-4 text-center">
+               <button @click="connect" class="bg-amber text-crt-bg px-8 py-1 hover:bg-amber-bright font-bold uppercase">
+                 [ INITIALIZE LINK ]
+               </button>
+             </div>
+
+             <div class="h-20 border border-amber-dim p-2 text-amber-dim text-sm mt-4 font-mono overflow-hidden">
+                <div v-for="l in terminalLog" :key="l">{{ l }}</div>
+                <div v-if="error" class="text-red-500">{{ error }}</div>
+             </div>
+          </div>
+        </div>
+      </div>
+
+      <div v-else class="flex flex-1 overflow-hidden mt-2 border-2 border-amber-dim">
+
+        <aside class="w-80 border-r-2 border-amber-dim flex flex-col bg-crt-bg">
+
+          <div class="flex-1 overflow-y-auto p-2">
+            <div class="mb-4">
+              <div class="bg-amber-dim text-crt-bg px-1 mb-1 flex justify-between">
+                <span>INDEX (STAGED)</span>
+                <span>[{{ stagedList.length }}]</span>
               </div>
-              <div v-if="!stagedList.length" class="text-xs italic text-gray-400 px-2">Empty</div>
-              <div v-for="f in stagedList" :key="f.filepath" class="group flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer hover:bg-white border border-transparent hover:border-gray-200" :class="{'bg-white border-gray-200 shadow-sm': selectedFile===f.filepath}" @click="showDiff(f.filepath)">
-                <div class="w-2 h-2 rounded-full bg-green-500"></div>
-                <span class="text-sm truncate">{{ getBasename(f.filepath) }}</span>
+              <div v-if="!stagedList.length" class="text-amber-dim px-2">-- EMPTY --</div>
+              <div v-for="f in stagedList" :key="f.filepath"
+                   @click="showDiff(f.filepath)"
+                   class="cursor-pointer hover:bg-amber-dim hover:text-crt-bg px-1 flex gap-2 truncate"
+                   :class="selectedFile === f.filepath ? 'bg-amber text-crt-bg' : ''">
+                <span>*</span> {{ getBasename(f.filepath) }}
               </div>
             </div>
 
             <div>
-              <div class="text-xs font-bold text-txt-sub uppercase tracking-wider mb-2 px-2 flex justify-between">
-                <span>Changes</span>
-                <span v-if="unstagedList.length" class="bg-amber-100 text-amber-700 px-1.5 rounded-full">{{ unstagedList.length }}</span>
+              <div class="bg-amber-dim text-crt-bg px-1 mb-1 flex justify-between">
+                <span>WORKING DIR</span>
+                <span>[{{ unstagedList.length }}]</span>
               </div>
-              <div v-if="!unstagedList.length" class="text-xs italic text-gray-400 px-2">Clean</div>
-              <div v-for="f in unstagedList" :key="f.filepath" class="group flex items-center justify-between px-2 py-1.5 rounded-lg cursor-pointer hover:bg-white border border-transparent hover:border-gray-200" :class="{'bg-white border-gray-200 shadow-sm': selectedFile===f.filepath}" @click="showDiff(f.filepath)">
-                <div class="flex items-center gap-2 min-w-0">
-                  <div class="w-2 h-2 rounded-full bg-amber-400"></div>
-                  <span class="text-sm truncate">{{ getBasename(f.filepath) }}</span>
-                </div>
-                <button @click.stop="stageFile(f.filepath)" class="opacity-0 group-hover:opacity-100 hover:bg-brand hover:text-white p-1 rounded transition-all"><Play size="12" fill="currentColor"/></button>
+              <div v-if="!unstagedList.length" class="text-amber-dim px-2">-- CLEAN --</div>
+              <div v-for="f in unstagedList" :key="f.filepath"
+                   class="flex justify-between hover:bg-amber-dim hover:text-crt-bg px-1 cursor-pointer group"
+                   :class="selectedFile === f.filepath ? 'bg-amber text-crt-bg' : ''"
+                   @click="showDiff(f.filepath)">
+                <span class="truncate">{{ getBasename(f.filepath) }}</span>
+                <span @click.stop="stageFile(f.filepath)" class="text-amber-dim group-hover:text-crt-bg font-bold hover:underline">[ADD]</span>
               </div>
             </div>
           </div>
 
-          <div class="p-4 border-t border-border bg-white">
-            <textarea v-model="commitMsg" placeholder="Commit message..." class="w-full border border-border rounded-xl p-3 text-sm focus:outline-brand h-20 resize-none"></textarea>
-            <button @click="doCommit" :disabled="!stagedList.length || !commitMsg" class="w-full mt-2 bg-brand text-white py-2 rounded-lg text-sm font-bold hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed">Commit</button>
+          <div class="h-32 border-t-2 border-amber-dim p-2 flex flex-col">
+            <textarea v-model="commitMsg" class="flex-1 bg-transparent text-amber outline-none resize-none placeholder-amber-dim uppercase" placeholder="ENTER COMMIT MESSAGE..."></textarea>
+            <div class="flex justify-between items-center mt-1">
+              <span class="text-sm text-amber-dim cursor-blink">_</span>
+              <button @click="doCommit" class="border border-amber px-2 hover:bg-amber hover:text-crt-bg uppercase text-sm">
+                [ EXECUTE COMMIT ]
+              </button>
+            </div>
           </div>
         </aside>
 
-        <main class="flex-1 bg-white relative flex flex-col">
+        <main class="flex-1 flex flex-col bg-crt-bg relative">
 
-          <div v-if="selectedFile" class="absolute inset-0 z-20 bg-white flex flex-col">
-            <div class="h-10 border-b border-border flex items-center justify-between px-4 bg-gray-50 shrink-0">
-              <div class="flex items-center gap-2 text-sm text-txt-main font-mono"><FileCode size="14" class="text-brand"/> {{ selectedFile }}</div>
-              <button @click="selectedFile = ''" class="hover:bg-gray-200 p-1 rounded"><X size="16"/></button>
+          <div v-if="selectedFile" class="absolute inset-0 flex flex-col z-20 bg-crt-bg">
+            <div class="border-b border-amber-dim px-2 py-1 flex justify-between items-center bg-crt-panel">
+              <span>VIEWING: {{ selectedFile }}</span>
+              <button @click="selectedFile = ''" class="hover:bg-amber hover:text-crt-bg px-2">[ X ]</button>
             </div>
-            <div class="flex-1 overflow-auto p-4 font-mono text-xs">
-              <div v-if="!diffContent" class="text-center text-gray-400 mt-10">Preview requires backend /diff endpoint update</div>
-              <pre v-else>{{ diffContent }}</pre>
+            <div class="flex-1 overflow-auto p-2 text-lg leading-tight custom-scrollbar">
+              <pre class="whitespace-pre-wrap font-mono">{{ diffContent }}</pre>
             </div>
           </div>
 
           <div class="flex-1 flex flex-col overflow-hidden">
-            <div class="h-10 border-b border-border flex items-center px-6 bg-gray-50 text-xs font-bold text-txt-sub uppercase tracking-wider shrink-0">
-              <History size="14" class="mr-2"/> Recent History
-            </div>
-            <div class="flex-1 overflow-y-auto p-6 space-y-4">
-              <div v-for="c in commits" :key="c.oid" class="flex gap-4 group">
-                <div class="w-8 h-8 rounded-full bg-brand/10 text-brand flex items-center justify-center text-xs font-bold shrink-0 border border-brand/20">
-                  {{ c.author.charAt(0).toUpperCase() }}
+             <div class="border-b border-amber-dim px-2 py-1 bg-amber-dim text-crt-bg">
+               TRANSACTION LOG (HISTORY)
+             </div>
+             <div class="flex-1 overflow-y-auto p-2 space-y-2">
+                <div v-for="c in commits" :key="c.oid" class="border-l-2 border-amber-dim pl-2 hover:border-amber">
+                   <div class="flex justify-between">
+                     <span class="font-bold">{{ c.message.toUpperCase() }}</span>
+                     <span class="text-amber-dim">{{ c.shortOid }}</span>
+                   </div>
+                   <div class="text-sm text-amber-dim">
+                     USER: {{ c.author.toUpperCase() }} // {{ formatDistanceToNow(c.timestamp * 1000).toUpperCase() }} AGO
+                   </div>
                 </div>
-                <div class="flex-1 min-w-0 pb-4 border-b border-dashed border-border group-last:border-0">
-                  <div class="flex justify-between items-baseline">
-                    <h3 class="font-medium text-txt-main truncate pr-4">{{ c.message }}</h3>
-                    <span class="font-mono text-xs text-txt-sub bg-gray-100 px-1.5 rounded">{{ c.shortOid }}</span>
-                  </div>
-                  <div class="text-xs text-txt-sub mt-1 flex gap-2">
-                    <span>{{ c.author }}</span> • <span>{{ formatDistanceToNow(c.timestamp * 1000) }} ago</span>
-                  </div>
-                </div>
-              </div>
-            </div>
+             </div>
           </div>
 
         </main>
       </div>
+
+      <footer class="mt-auto border-t-2 border-amber py-1 px-2 flex justify-between text-sm text-amber-dim uppercase">
+        <span>MEM: OK</span>
+        <span>STATUS: {{ isConnected ? 'CONNECTED' : 'OFFLINE' }}</span>
+        <span>MODE: READ/WRITE</span>
+      </footer>
+
     </div>
   </div>
 </template>
