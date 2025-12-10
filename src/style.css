@@ -5,20 +5,30 @@
 html, body {
   background-color: #09090b;
   color: #e4e4e7;
+  font-family: 'JetBrains Mono', monospace; /* 关键 */
+  height: 100%;
+  overflow: hidden; /* 防止整个页面滚动 */
+  -webkit-font-smoothing: antialiased;
 }
 
-/* 自定义滚动条，保持界面整洁 */
+/* 极其隐蔽的滚动条 */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: #09090b;
+  background: transparent;
 }
 ::-webkit-scrollbar-thumb {
   background: #27272a;
-  border-radius: 4px;
+  border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
   background: #3f3f46;
+}
+
+/* 选中文字的颜色 */
+::selection {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
 }
